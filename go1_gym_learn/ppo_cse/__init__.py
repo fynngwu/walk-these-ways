@@ -9,6 +9,7 @@ from params_proto import PrefixProto
 
 from .actor_critic import ActorCritic
 from .rollout_storage import RolloutStorage
+from .wandb_utils import build_wandb_metrics_payload, mean_or_none
 
 
 def class_to_dict(obj) -> dict:
@@ -61,11 +62,12 @@ class RunnerArgs(PrefixProto, cli=False):
 
 class Runner:
 
-    def __init__(self, env, device='cpu'):
+    def __init__(self, env, device='cpu', wandb_run=None):
         from .ppo import PPO
 
         self.device = device
         self.env = env
+        self.wandb_run = wandb_run
 
         actor_critic = ActorCritic(self.env.num_obs,
                                       self.env.num_privileged_obs,
@@ -205,10 +207,14 @@ class Runner:
             stop = time.time()
             learn_time = stop - start
 
+            time_elapsed = logger.since('start')
+            time_iter = logger.split('epoch')
+            next_tot_timesteps = self.tot_timesteps + self.num_steps_per_env * self.env.num_envs
+
             logger.store_metrics(
                 # total_time=learn_time - collection_time,
-                time_elapsed=logger.since('start'),
-                time_iter=logger.split('epoch'),
+                time_elapsed=time_elapsed,
+                time_iter=time_iter,
                 adaptation_loss=mean_adaptation_module_loss,
                 mean_value_loss=mean_value_loss,
                 mean_surrogate_loss=mean_surrogate_loss,
@@ -218,6 +224,23 @@ class Runner:
                 mean_decoder_test_loss_student=mean_decoder_test_loss_student,
                 mean_adaptation_module_test_loss=mean_adaptation_module_test_loss
             )
+
+            if self.wandb_run is not None:
+                wandb_payload = build_wandb_metrics_payload(
+                    iteration=it,
+                    timesteps=next_tot_timesteps,
+                    adaptation_loss=mean_adaptation_module_loss,
+                    mean_value_loss=mean_value_loss,
+                    mean_surrogate_loss=mean_surrogate_loss,
+                    mean_adaptation_module_test_loss=mean_adaptation_module_test_loss,
+                    time_elapsed=time_elapsed,
+                    time_iter=time_iter,
+                    train_reward_mean=mean_or_none(rewbuffer),
+                    train_ep_len_mean=mean_or_none(lenbuffer),
+                    eval_reward_mean=mean_or_none(rewbuffer_eval),
+                    eval_ep_len_mean=mean_or_none(lenbuffer_eval),
+                )
+                self.wandb_run.log(wandb_payload, step=it)
 
             if RunnerArgs.save_video_interval:
                 self.log_video(it)

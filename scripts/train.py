@@ -1,4 +1,40 @@
-def train_go1(headless=True):
+import argparse
+
+
+def build_wandb_config(ac_args, ppo_args, runner_args, cfg_dict):
+    return {
+        "AC_Args": ac_args,
+        "PPO_Args": ppo_args,
+        "RunnerArgs": runner_args,
+        "Cfg": cfg_dict,
+    }
+
+
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description="Train Go1 policy")
+    parser.add_argument("--headless", action="store_true", help="Run Isaac Gym without GUI")
+    parser.add_argument("--wandb", action="store_true", help="Enable Weights & Biases logging")
+    parser.add_argument("--wandb-project", default="walk-these-ways", help="W&B project name")
+    parser.add_argument("--wandb-entity", default=None, help="W&B entity (user/team)")
+    parser.add_argument("--wandb-run-name", default=None, help="W&B run display name")
+    parser.add_argument(
+        "--wandb-mode",
+        default="online",
+        choices=["online", "offline"],
+        help="W&B mode (online/offline)",
+    )
+    args, unknown = parser.parse_known_args(argv)
+    return args, unknown
+
+
+def train_go1(
+    headless=False,
+    use_wandb=False,
+    wandb_project="walk-these-ways",
+    wandb_entity=None,
+    wandb_run_name=None,
+    wandb_mode="online",
+):
 
     import isaacgym
     assert isaacgym
@@ -14,7 +50,7 @@ def train_go1(headless=True):
     from go1_gym.envs.wrappers.history_wrapper import HistoryWrapper
     from go1_gym_learn.ppo_cse.actor_critic import AC_Args
     from go1_gym_learn.ppo_cse.ppo import PPO_Args
-    from go1_gym_learn.ppo_cse import RunnerArgs
+    from go1_gym_learn.ppo_cse import RunnerArgs, class_to_dict
 
     config_go1(Cfg)
 
@@ -204,20 +240,52 @@ def train_go1(headless=True):
     Cfg.commands.binary_phases = True
     Cfg.commands.gaitwise_curricula = True
 
-    env = VelocityTrackingEasyEnv(sim_device='cuda:0', headless=False, cfg=Cfg)
+    ac_args = dict(vars(AC_Args))
+    ppo_args = dict(vars(PPO_Args))
+    runner_args = dict(vars(RunnerArgs))
+    cfg_dict = class_to_dict(Cfg)
+
+    wandb_run = None
+    if use_wandb:
+        try:
+            import wandb
+        except ImportError as exc:
+            raise RuntimeError(
+                "W&B logging is enabled but package 'wandb' is not installed. "
+                "Install it with: pip install wandb (or pip install -e .[wandb])"
+            ) from exc
+
+        wandb_run = wandb.init(
+            project=wandb_project,
+            entity=wandb_entity,
+            name=wandb_run_name,
+            mode=wandb_mode,
+            config=build_wandb_config(ac_args, ppo_args, runner_args, cfg_dict),
+        )
+
+    env = VelocityTrackingEasyEnv(sim_device='cuda:0', headless=headless, cfg=Cfg)
 
     # log the experiment parameters
-    logger.log_params(AC_Args=vars(AC_Args), PPO_Args=vars(PPO_Args), RunnerArgs=vars(RunnerArgs),
-                      Cfg=vars(Cfg))
+    logger.log_params(AC_Args=ac_args, PPO_Args=ppo_args, RunnerArgs=runner_args, Cfg=cfg_dict)
 
     env = HistoryWrapper(env)
     gpu_id = 0
-    runner = Runner(env, device=f"cuda:{gpu_id}")
-    runner.learn(num_learning_iterations=100000, init_at_random_ep_len=True, eval_freq=100)
+    runner = Runner(env, device=f"cuda:{gpu_id}", wandb_run=wandb_run)
+
+    try:
+        runner.learn(num_learning_iterations=100000, init_at_random_ep_len=True, eval_freq=100)
+    finally:
+        if wandb_run is not None:
+            wandb_run.finish()
 
 
 if __name__ == '__main__':
+    import sys
     from pathlib import Path
+
+    args, unknown = parse_args()
+    sys.argv = [sys.argv[0], *unknown]
+
     from ml_logger import logger
     from go1_gym import MINI_GYM_ROOT_DIR
 
@@ -252,5 +320,11 @@ if __name__ == '__main__':
                   xKey: iterations
                 """, filename=".charts.yml", dedent=True)
 
-    # to see the environment rendering, set headless=False
-    train_go1(headless=False)
+    train_go1(
+        headless=args.headless,
+        use_wandb=args.wandb,
+        wandb_project=args.wandb_project,
+        wandb_entity=args.wandb_entity,
+        wandb_run_name=args.wandb_run_name,
+        wandb_mode=args.wandb_mode,
+    )

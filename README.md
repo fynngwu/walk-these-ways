@@ -145,6 +145,32 @@ To train the Go1 controller from [Walk these Ways](https://sites.google.com/view
 python scripts/train.py
 ```
 
+You can now run training in headless mode directly from CLI:
+
+```bash
+python scripts/train.py --headless
+```
+
+Optional Weights & Biases logging is also supported.
+
+First install the extra dependency:
+
+```bash
+pip install -e ".[wandb]"
+```
+
+Then run training with W&B enabled:
+
+```bash
+python scripts/train.py --headless --wandb --wandb-project walk-these-ways
+```
+
+Useful W&B flags:
+
+- `--wandb-entity <user-or-team>`
+- `--wandb-run-name <run-name>`
+- `--wandb-mode offline` (use local offline logging and sync later)
+
 After initializing the simulator, the script will print out a list of metrics every ten training iterations.
 
 Training with the default configuration requires about 12GB of GPU memory. If you have less memory available, you can 
@@ -265,4 +291,3 @@ To deploy on the robot, replace the line https://github.com/Improbable-AI/walk-t
 | ----------- | ----------- | ---------- |
 | Out of disk space     | If you run out of disk space during `cd ~/go1_gym/go1_gym_deploy/installer && ./install_deployment_code.sh` consider changing the script to use `192.168.123.13` instead (at least in my Go1 Edu with 3 Jetson nano, I only had the required disk space to copy the tar and extract the image in only `192.168.123.13`). Alternatively, consider deploying on an external PC.       | https://github.com/Improbable-AI/walk-these-ways/issues/7 |
 | `lcm_position` syntax error  | When deploying with `sudo ./start_unitree_sdk.sh` on an external PC/NUC, if you get the following error: `./lcm_position: 1: Syntax error: word unexpected (expecting ")")`, It is likely because the ./lcm_position has been compiled for ARM aarch64 (to run on the jetson), please recompile it for your architecture(external PC/ NUC) using https://github.com/Improbable-AI/unitree_legged_sdk.        | https://github.com/Improbable-AI/walk-these-ways/issues/7 |
-
