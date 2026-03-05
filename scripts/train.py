@@ -10,6 +10,13 @@ def build_wandb_config(ac_args, ppo_args, runner_args, cfg_dict):
     }
 
 
+def configure_headless_runtime(headless, cfg, runner_args_cls):
+    if not headless:
+        return
+    cfg.env.record_video = False
+    runner_args_cls.save_video_interval = 0
+
+
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="Train Go1 policy")
     parser.add_argument("--headless", action="store_true", help="Run Isaac Gym without GUI")
@@ -239,6 +246,8 @@ def train_go1(
     Cfg.commands.pacing_offset = False
     Cfg.commands.binary_phases = True
     Cfg.commands.gaitwise_curricula = True
+
+    configure_headless_runtime(headless=headless, cfg=Cfg, runner_args_cls=RunnerArgs)
 
     ac_args = dict(vars(AC_Args))
     ppo_args = dict(vars(PPO_Args))

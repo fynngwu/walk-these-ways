@@ -1626,8 +1626,10 @@ class LeggedRobot(BaseTask):
                                          gymapi.Vec3(bx, by, bz))
             self.video_frame = self.gym.get_camera_image(self.sim, self.envs[0], self.rendering_camera,
                                                          gymapi.IMAGE_COLOR)
-            self.video_frame = self.video_frame.reshape((self.camera_props.height, self.camera_props.width, 4))
-            self.video_frames.append(self.video_frame)
+            expected_size = self.camera_props.height * self.camera_props.width * 4
+            if self.video_frame is not None and self.video_frame.size == expected_size:
+                self.video_frame = self.video_frame.reshape((self.camera_props.height, self.camera_props.width, 4))
+                self.video_frames.append(self.video_frame)
 
         if self.record_eval_now and self.complete_video_frames_eval is not None and len(
                 self.complete_video_frames_eval) == 0:
@@ -1640,9 +1642,11 @@ class LeggedRobot(BaseTask):
                 self.video_frame_eval = self.gym.get_camera_image(self.sim, self.envs[self.num_train_envs],
                                                                   self.rendering_camera_eval,
                                                                   gymapi.IMAGE_COLOR)
-                self.video_frame_eval = self.video_frame_eval.reshape(
-                    (self.camera_props.height, self.camera_props.width, 4))
-                self.video_frames_eval.append(self.video_frame_eval)
+                expected_size = self.camera_props.height * self.camera_props.width * 4
+                if self.video_frame_eval is not None and self.video_frame_eval.size == expected_size:
+                    self.video_frame_eval = self.video_frame_eval.reshape(
+                        (self.camera_props.height, self.camera_props.width, 4))
+                    self.video_frames_eval.append(self.video_frame_eval)
 
     def start_recording(self):
         self.complete_video_frames = None
