@@ -18,6 +18,8 @@ def train_go1(headless=True):
 
     config_dog_v2(Cfg)
 
+    Cfg.env.record_video = False
+
     Cfg.commands.num_lin_vel_bins = 30
     Cfg.commands.num_ang_vel_bins = 30
     Cfg.curriculum_thresholds.tracking_ang_vel = 0.7
@@ -213,6 +215,17 @@ def train_go1(headless=True):
     env = HistoryWrapper(env)
     gpu_id = 0
     runner = Runner(env, device=f"cuda:{gpu_id}")
+
+    import os
+    resume_checkpoint = os.environ.get("RESUME_CHECKPOINT")
+    resume_run = os.environ.get("RESUME_RUN")
+    if resume_run and not resume_checkpoint:
+        resume_checkpoint = os.path.join(resume_run, "checkpoints", "ac_weights_last.pt")
+    if resume_checkpoint:
+        print(f"Resuming actor-critic weights from {resume_checkpoint}")
+        weights = torch.load(resume_checkpoint, map_location=f"cuda:{gpu_id}")
+        runner.alg.actor_critic.load_state_dict(weights)
+
     runner.learn(num_learning_iterations=100000, init_at_random_ep_len=True, eval_freq=100)
 
 

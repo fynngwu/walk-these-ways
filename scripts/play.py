@@ -9,7 +9,7 @@ import pickle as pkl
 
 from go1_gym.envs import *
 from go1_gym.envs.base.legged_robot_config import Cfg
-from go1_gym.envs.go1.go1_config import config_go1
+from go1_gym.envs.dog_v2.dog_v2_config import config_dog_v2
 from go1_gym.envs.go1.velocity_tracking import VelocityTrackingEasyEnv
 
 from tqdm import tqdm
@@ -30,8 +30,11 @@ def load_policy(logdir):
 
 
 def load_env(label, headless=False):
-    dirs = glob.glob(f"../runs/{label}/*")
-    logdir = sorted(dirs)[0]
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent
+    dirs = glob.glob(str(root / "runs" / label / "*"))
+    logdir = sorted(dirs)[-1]
+    print(f"Loading policy from {logdir}")
 
     with open(logdir + "/parameters.pkl", 'rb') as file:
         pkl_cfg = pkl.load(file)
@@ -70,11 +73,10 @@ def load_env(label, headless=False):
 
     Cfg.domain_rand.lag_timesteps = 6
     Cfg.domain_rand.randomize_lag_timesteps = True
-    Cfg.control.control_type = "actuator_net"
 
     from go1_gym.envs.wrappers.history_wrapper import HistoryWrapper
 
-    env = VelocityTrackingEasyEnv(sim_device='cuda:0', headless=False, cfg=Cfg)
+    env = VelocityTrackingEasyEnv(sim_device='cuda:0', headless=headless, cfg=Cfg)
     env = HistoryWrapper(env)
 
     # load policy
@@ -86,45 +88,99 @@ def load_env(label, headless=False):
     return env, policy
 
 
-def play_go1(headless=True):
-    from ml_logger import logger
+class KeyboardController:
+    def __init__(self):
+        from pynput import keyboard as _kb
+        self._kb = _kb
+        self.keys = set()
+        self.listener = _kb.Listener(on_press=self._on_press, on_release=self._on_release)
+        self.listener.start()
 
+    def _on_press(self, key):
+        try:
+            self.keys.add(key.char.lower())
+        except AttributeError:
+            pass
+
+    def _on_release(self, key):
+        try:
+            self.keys.discard(key.char.lower())
+        except AttributeError:
+            if key == self._kb.Key.esc:
+                self.listener.stop()
+                return False
+
+    def get_vel(self, max_x=1.5, max_y=0.6, max_yaw=2.0):
+        x = max_x * int('w' in self.keys) - max_x * int('s' in self.keys)
+        y = max_y * int('a' in self.keys) - max_y * int('d' in self.keys)
+        yaw = max_yaw * int('q' in self.keys) - max_yaw * int('e' in self.keys)
+        return float(x), float(y), float(yaw)
+
+
+def play_go1(headless=True):
     from pathlib import Path
     from go1_gym import MINI_GYM_ROOT_DIR
     import glob
     import os
 
-    label = "gait-conditioned-agility/pretrain-v0/train"
+    label = "gait-conditioned-agility/2026-05-09/train"
 
     env, policy = load_env(label, headless=headless)
 
-    num_eval_steps = 250
     gaits = {"pronking": [0, 0, 0],
              "trotting": [0.5, 0, 0],
              "bounding": [0, 0.5, 0],
              "pacing": [0, 0, 0.5]}
+    gait_names = list(gaits.keys())
 
-    x_vel_cmd, y_vel_cmd, yaw_vel_cmd = 1.5, 0.0, 0.0
     body_height_cmd = 0.0
     step_frequency_cmd = 3.0
-    gait = torch.tensor(gaits["trotting"])
+    gait_idx = [1]
     footswing_height_cmd = 0.08
     pitch_cmd = 0.0
     roll_cmd = 0.0
     stance_width_cmd = 0.25
 
-    measured_x_vels = np.zeros(num_eval_steps)
-    target_x_vels = np.ones(num_eval_steps) * x_vel_cmd
-    joint_positions = np.zeros((num_eval_steps, 12))
+    kb = KeyboardController()
+
+    print("=== Keyboard Control ===")
+    print("W/S: forward/backward")
+    print("A/D: left/right")
+    print("Q/E: turn left/right")
+    print("1/2/3/4: pronking/trotting/bounding/pacing")
+    print("Z/X: stance width down/up")
+    print("F/R: frequency down/up")
+    print("G/T: foot swing height down/up")
+    print("ESC: quit")
+    print("========================")
 
     obs = env.reset()
+    step = 0
 
-    for i in tqdm(range(num_eval_steps)):
+    while True:
+        if not kb.listener.is_alive():
+            break
+
+        if '1' in kb.keys: gait_idx[0] = 0
+        if '2' in kb.keys: gait_idx[0] = 1
+        if '3' in kb.keys: gait_idx[0] = 2
+        if '4' in kb.keys: gait_idx[0] = 3
+        if 'z' in kb.keys: stance_width_cmd = max(0.10, stance_width_cmd - 0.002)
+        if 'x' in kb.keys: stance_width_cmd = min(0.45, stance_width_cmd + 0.002)
+        if 'f' in kb.keys: step_frequency_cmd = max(2.0, step_frequency_cmd - 0.01)
+        if 'r' in kb.keys: step_frequency_cmd = min(4.0, step_frequency_cmd + 0.01)
+        if 'g' in kb.keys: footswing_height_cmd = max(0.03, footswing_height_cmd - 0.001)
+        if 't' in kb.keys: footswing_height_cmd = min(0.35, footswing_height_cmd + 0.001)
+
+        x_vel, y_vel, yaw_vel = kb.get_vel()
+        gait = torch.tensor(gaits[gait_names[gait_idx[0]]])
+
         with torch.no_grad():
             actions = policy(obs)
-        env.commands[:, 0] = x_vel_cmd
-        env.commands[:, 1] = y_vel_cmd
-        env.commands[:, 2] = yaw_vel_cmd
+
+        env.commands[:, 0] = x_vel
+        env.commands[:, 1] = y_vel
+        env.commands[:, 2] = yaw_vel
         env.commands[:, 3] = body_height_cmd
         env.commands[:, 4] = step_frequency_cmd
         env.commands[:, 5:8] = gait
@@ -135,26 +191,10 @@ def play_go1(headless=True):
         env.commands[:, 12] = stance_width_cmd
         obs, rew, done, info = env.step(actions)
 
-        measured_x_vels[i] = env.base_lin_vel[0, 0]
-        joint_positions[i] = env.dof_pos[0, :].cpu()
-
-    # plot target and measured forward velocity
-    from matplotlib import pyplot as plt
-    fig, axs = plt.subplots(2, 1, figsize=(12, 5))
-    axs[0].plot(np.linspace(0, num_eval_steps * env.dt, num_eval_steps), measured_x_vels, color='black', linestyle="-", label="Measured")
-    axs[0].plot(np.linspace(0, num_eval_steps * env.dt, num_eval_steps), target_x_vels, color='black', linestyle="--", label="Desired")
-    axs[0].legend()
-    axs[0].set_title("Forward Linear Velocity")
-    axs[0].set_xlabel("Time (s)")
-    axs[0].set_ylabel("Velocity (m/s)")
-
-    axs[1].plot(np.linspace(0, num_eval_steps * env.dt, num_eval_steps), joint_positions, linestyle="-", label="Measured")
-    axs[1].set_title("Joint Positions")
-    axs[1].set_xlabel("Time (s)")
-    axs[1].set_ylabel("Joint Position (rad)")
-
-    plt.tight_layout()
-    plt.show()
+        if step % 50 == 0:
+            vel = env.base_lin_vel[0, 0].item()
+            print(f"step={step} gait={gait_names[gait_idx[0]]} cmd=({x_vel:.1f},{y_vel:.1f},{yaw_vel:.1f}) freq={step_frequency_cmd:.2f} swing={footswing_height_cmd:.3f} stance_width={stance_width_cmd:.3f} vel_x={vel:.2f} action=[{actions[0,:].min().item():.3f},{actions[0,:].max().item():.3f}] obs_range=[{obs['obs_history'][0].min().item():.3f},{obs['obs_history'][0].max().item():.3f}]")
+        step += 1
 
 
 if __name__ == '__main__':
